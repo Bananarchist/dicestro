@@ -1,4 +1,4 @@
-module Main exposing (main, spreadForListOfDice)
+module Main exposing (buffParser, dieParser, main, parser, probGenToTuple, spreadForListOfDice)
 
 import Axis
 import Browser
@@ -7,6 +7,7 @@ import Html.Attributes as Hat
 import Html.Events as Emit
 import List exposing (concat, filter, foldl, length, map, range, repeat, sort, sortBy, sum, unzip)
 import List.Extra exposing (allDifferentBy, cartesianProduct, gatherEquals, zip)
+import Parser exposing ((|.), (|=), Parser, Step(..), int, succeed, symbol)
 import Scale exposing (BandConfig, BandScale, ContinuousScale, defaultBandConfig)
 import Tuple exposing (first, mapBoth, mapSecond, second)
 import TypedSvg exposing (g, rect, style, svg, text_)
@@ -123,15 +124,18 @@ xScale model =
 yScale : Model -> ContinuousScale Float
 yScale model =
     model
-    |> data
-    |> unzip
-    |> second
-    |> List.maximum
-    |> Maybe.withDefault 1.0
-    |> Tuple.pair 0
-    |> Scale.linear (h - 2 * padding, 0 )
-    --|> Scale.band { defaultLinearScale | paddingInner = 0.1, paddingOuter = 0.2 } ( 0, h - 2 * padding )
-    --Scale.linear ( h - 2 * padding, 0 ) ( 0, 1.0 )
+        |> data
+        |> unzip
+        |> second
+        |> List.maximum
+        |> Maybe.withDefault 1.0
+        |> Tuple.pair 0
+        |> Scale.linear ( h - 2 * padding, 0 )
+
+
+
+--|> Scale.band { defaultLinearScale | paddingInner = 0.1, paddingOuter = 0.2 } ( 0, h - 2 * padding )
+--Scale.linear ( h - 2 * padding, 0 ) ( 0, 1.0 )
 
 
 xAxis model =
@@ -268,10 +272,9 @@ fieldSetForDie ( count, faces ) tagIndex =
             [ Tag.input inputAttrs []
             , Tag.text "d"
             , Tag.select [ Emit.onInput (String.toInt >> Maybe.withDefault 6 >> ChangeFaceForFace faces) ] <|
-                List.map (String.fromInt >> optTag) (List.range 1 20)
+                List.map (String.fromInt >> optTag) (List.range -1 20)
             ]
             buttons
-
 
 
 data model =
@@ -292,3 +295,56 @@ spreadForListOfDice =
         >> unzip
         >> mapSecond (\l -> map (\x -> x / sum l) l)
         >> (\t -> zip (first t) (second t))
+
+
+probGenToTuple p =
+    case p of
+        Die n f ->
+            ( n, f )
+
+        Buff n ->
+            ( n, 1 )
+
+
+dieParser : Parser ProbabilityGenerator
+dieParser =
+    succeed Die
+        |= int
+        |. symbol "d"
+        |= int
+
+
+{-| Does not yet handle negative
+-}
+buffParser : Parser ProbabilityGenerator
+buffParser =
+    Parser.oneOf
+        [ succeed Buff
+            |. symbol "+"
+            |= int
+        , succeed (negate >> Buff)
+            |. symbol "-"
+            |= int
+        ]
+
+
+type ProbabilityGenerator
+    = Die Int Int
+    | Buff Int
+
+
+parser : Parser (List ProbabilityGenerator)
+parser =
+    Parser.loop []
+        (\v ->
+            Parser.oneOf
+                [ succeed (\s -> Loop (s :: v))
+                    |= dieParser
+                , succeed (\s -> Loop (s :: v))
+                    |= buffParser
+                , Parser.chompIf ((==) ',')
+                    |> Parser.map (\_ -> Loop v)
+                , succeed ()
+                    |> Parser.map (\_ -> Done (List.reverse v))
+                ]
+        )
